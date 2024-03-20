@@ -1,0 +1,39 @@
+import pandas as pd
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+import os
+
+# Azure Blob Storage connection string and container name
+azure_connection_string = "your_connection_string_here"
+container_name = "your_container_name_here"
+
+# Create a BlobServiceClient
+blob_service_client = BlobServiceClient.from_connection_string(azure_connection_string)
+
+# List to store the file names and their corresponding row counts
+file_row_counts = []
+
+# Get a reference to the container
+container_client = blob_service_client.get_container_client(container_name)
+
+# List all blobs (data files) in the container
+blobs = container_client.list_blobs()
+
+# Loop through all blobs in the container
+for blob in blobs:
+    # Check if the blob has a supported file extension
+    if blob.name.endswith('.csv') or blob.name.endswith('.txt') or blob.name.endswith('.xml'):
+        # Download the blob data and read it into a DataFrame
+        blob_client = container_client.get_blob_client(blob.name)
+        blob_data = blob_client.download_blob()
+        data = blob_data.readall().decode('utf-8')
+        df = pd.read_csv(pd.compat.StringIO(data), dtype=str, header=None, low_memory=False)
+        row_count = len(df)
+        file_row_counts.append((blob.name, row_count))
+
+# Print the file names and their row counts
+for filename, row_count in file_row_counts:
+    print(f"File: {filename} - Data Count: {row_count}")
+
+# Calculate the sum of all row counts
+total_row_count = sum(row_count for _, row_count in file_row_counts)
+print(f"Total Data Count: {total_row_count}")

@@ -1,0 +1,68 @@
+import re
+
+schemaname = 'Finance'
+tablename = 'CustInvoiceJour'
+column_description = '''
+bala,
+'''
+
+column_definition = '''
+- 0: "BIGINT" (Max: 5637154343) (Min: 5637144576),
+- 1: NULL ,
+- 2: NULL ,
+- 3: DATETIME(WITH Alphabets with start year),
+- 4: "BIGINT" (Max: 5637154343) (Min: 5637144576),
+- 5:  VARCHAR(4) (Max Length: 4, Min Length: 3), 
+- 6:  VARCHAR(68) (Max Length: 68, Min Length: 13), 
+- 7: "INT" (Max: 0) (Min: 0),
+- 8: "INT" (Max: 0) (Min: 0),
+- 9: "INT" (Max: 89) (Min: 8),
+- 10: "BIGINT" (Max: 2141801266) (Min: 1),
+- 11: "BIGINT" (Max: 5637144576) (Min: 5637144576),
+'''
+
+# Regular expression patterns for both inputs
+column_pattern = r'[-\s](\d+):\s*([^:]+)\s*(?:\(M|\(W)|NULL'
+definition_pattern = r'\[(.*?)\]\s*\[(.*?)\]'
+
+# Extracting column descriptions
+matches_column = re.findall(column_pattern, column_description)
+matches_definition = re.findall(definition_pattern, column_definition)
+
+# Processing column descriptions
+column_output = []
+for match in matches_column:
+    col_number = match[0]
+    col_name = match[1]
+
+    if col_name == "NULL":
+        col_name = "VARCHAR(80)"
+
+    column_output.append(f' {col_name}')
+
+# Processing column definitions
+def extract_datatype(datatype_str):
+    datatype_match = re.search(r'\"([^\"]+)\"', datatype_str)
+    if datatype_match:
+        return datatype_match.group(1)
+    return 'VARCHAR(80)'  # Default to VARCHAR(80) if the datatype cannot be determined.
+
+definition_output = []
+for _, definition in matches_definition:
+    datatype = extract_datatype(definition)
+    definition_output.append(datatype)
+
+# Combining the outputs
+output = zip(
+    [f' {before} ' for before, _ in matches_definition],
+    column_output,
+    [' NULL ,' if (before, _) != ('3', ' DATETIME(WITH Alphabets with start year)') else ' NULL ,'],
+    definition_output
+)
+
+# Printing the combined output
+tablestru = f'CREATE TABLE {schemaname}_Tst.{tablename}('
+print(tablestru)
+for col, definition, null, datatype in output:
+    print(f'{col}{definition} {datatype}{null}')
+print(")")

@@ -1,0 +1,24 @@
+import pandas as pd
+import os
+
+# Directory where the CSV files are located
+csv_directory = input("Plese enter thr folder path:")
+
+# List to store the file names and their corresponding row counts
+file_row_counts = []
+
+# Loop through all CSV files in the directory
+for filename in os.listdir(csv_directory):
+    if filename.endswith('.csv'):
+        file_path = os.path.join(csv_directory, filename)
+        df = pd.read_csv(file_path, dtype=str, header=None, low_memory=False)  # Specify dtype and low_memory options
+        row_count = len(df)
+        file_row_counts.append((filename, row_count))
+
+# Print the file names and their row counts
+for filename, row_count in file_row_counts:
+    print(f"File: {filename} - Data Count: {row_count}")
+
+# Calculate the sum of all row counts
+total_row_count = sum(row_count for _, row_count in file_row_counts)
+print(f"Total Data Count: {total_row_count}")

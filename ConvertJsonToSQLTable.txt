@@ -1,0 +1,60 @@
+import json
+import re
+import os
+
+
+
+def create_table_query_from_json(json_file, table_name):
+    with open(json_file, 'r') as file:
+        data = json.load(file)
+
+    entity_name = table_name
+    columns = []
+    schema=input("Enterthe schemaNmae:")
+    entity_name=input("Enter the entity_name:")
+    definitions = data.get("definitions", [])
+    for definition in definitions:
+        attributes = definition.get("hasAttributes", [])
+        columns.extend(attributes)
+
+    query = f"CREATE TABLE {schema}.{entity_name} (\n"
+
+    for column in columns:
+        column_name = column["name"]
+        if "dataType" in column:
+            data_type = "VARCHAR(60)"
+            if re.findall("[a-zA-Z]", data_type):
+                maximum_length = column.get("maximumLength", 60)
+                data_type = f"VARCHAR({maximum_length})"
+
+            if column["dataType"].startswith("Amount"):
+                data_type = "NUMERIC(18,6)"
+            if column["dataType"].startswith("NoYes"):
+                data_type = "VARCHAR(10)"
+            if column["dataType"].endswith("DateTime"):
+                data_type ="DateTime"
+        elif "dataFormat" in column:
+            data_format = column["dataFormat"]
+            if data_format == "DateTime":
+                data_type = "VARCHAR(50)"
+            elif data_format == "Int32":
+                data_type = "INT"
+            elif data_format == "Int64":
+                data_type = "BIGINT"
+            else:
+                data_type = "VARCHAR(60)"
+
+        query += f"{column_name} {data_type} NULL,\n"
+
+    query = query[:-2] + " \n);"
+    return query
+
+folder_path = r'C:\Users\balamurugan.d\Downloads\f20\New folder (3)'
+json_files = [file for file in os.listdir(folder_path) if file.endswith(".json")]
+
+for json_file in json_files:
+    json_file_path = os.path.join(folder_path, json_file)
+    table_name = os.path.splitext(json_file)[0]  # Extract table name from the file name before the full stop
+    query = create_table_query_from_json(json_file_path, table_name)
+    print(query)
+    print("----------")

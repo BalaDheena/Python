@@ -1,0 +1,80 @@
+import pyodbc
+
+# Establish a connection to the SQL database
+conn = pyodbc.connect('DRIVER={SQL Server};SERVER=ca-allucent-srvr.database.windows.net;DATABASE=Allucent_DW;UID=Allucent_DW_adf;PWD=2&FzN%$R')
+
+
+# Create a cursor object
+cursor = conn.cursor()
+
+# Define table names and date format
+table1_name = 'BackUpTable.Allucent_dw_Resource_20240205'
+table2_name = 'allucent_dw.resource'
+condition = "loaddate='2024-01-31 11:30:57.907'"
+
+# Construct SQL queries dynamically
+query_table1 = f'select * from {table1_name}'
+#where {condition}'
+query_table2 = f'select [Resource], [ResourceId], [TimesheetapproverResourceId], [PartyNumber], [ResourceFullName], [ResourceNameAlias], [ResourceFirstName], [ResourceMiddleName], [ResourceLanguageId], [ResourceAdLogin], [ResourceAdDomain], [ResourceAxUserId], [ResourceEmail], [ResourceLastName], [PersonnelNumber], [ProjectRole], [Role], [CountryCodeRole], [ResourceTitle], [ExpenseApproverName], [TimesheetApproverName], [RequsitionApproverName], [ResourceCompanyId], [ResourceEmploymentType], [ResourceSchedulingCalendar], [SeniorityDate], [TerminationDate], [TerminationReason], [EmploymentStartDate], [TerminationDescription], [TermsOfEmployment], [TermsOfEmploymentDescription], [DefaultCategory], [MaxhoursCalendar], [DefaultTimeCategory], [MaxHoursCalendarName], [ResourceDefaultCategory], [CountryRegionOfBirth], [Country], [HcmWorkerRecId], [JobId], [JobDescription], [CurrentJobTitle], [DataAreaId], [EmploymentValidFrom], [EmploymentValidTo], [RequisitionApprover], [ExpenseApprover], [TimesheetApprover], [Branch], [BranchName], [Department], [DepartmentName], [EmploymentType], [EmploymentTypeName], [InterCompany], [InterCompanyName], [LegalEntity], [LegalEntityName], [Project], [ProjectName], [Region], [RegionName], [ResourceSitenumber], [ResourceSiteNumberName], [Worker], [WorkerName], [WorkerEntity], [WorkerEntityName], [PrimaryContactPhone], [BusinessUnit], [ActiveFlag], [ActiveEmployee], [LoadDate], [CurrentMonthStandardHours], [CurrentMonthTimeOffHrs], [NextMonthStandardHours], [NextMonthTimeOffHrs] from {table2_name} '
+#where {condition}'
+
+# Execute queries
+cursor.execute(query_table1)
+data_table1 = cursor.fetchall()
+column_headers1 = [column[0] for column in cursor.description]
+
+cursor.execute(query_table2)
+data_table2 = cursor.fetchall()
+column_headers2 = [column[0] for column in cursor.description]
+
+# Get the primary key dynamically from column headers
+primary_key_header1 = [header for header in column_headers1 if 'Resource' in header][0]
+primary_key_header2 = [header for header in column_headers2 if 'Resource' in header][0]
+
+# Create a table to store the results
+# cursor.execute('''
+#      CREATE TABLE Developer.MismatchResults (
+#          Table1Name NVARCHAR(255),
+#          Table2Name NVARCHAR(255),
+#          PrimaryKey NVARCHAR(255),
+#          ColumnName NVARCHAR(255),
+#          Value1 NVARCHAR(MAX),
+#          Value2 NVARCHAR(MAX)
+#      )
+#  ''')
+cursor.execute('truncate table Developer.MismatchResults')
+# Compare the data based on the primary key
+for row1 in data_table1:
+    primary_key_value1 = row1[column_headers1.index(primary_key_header1)]
+
+    # Find the corresponding row in table2
+    matching_rows_table2 = [row2 for row2 in data_table2 if row2[column_headers2.index(primary_key_header2)] == primary_key_value1]
+
+    if not matching_rows_table2:
+        # No matching row found in table2
+        print(f"No matching row found in {table2_name} for primary key {primary_key_value1}")
+        continue
+
+    row2 = matching_rows_table2[0]
+
+    # Compare the data
+    for col1, col2, header1, header2 in zip(row1, row2, column_headers1, column_headers2):
+        if col1 != col2:
+            print("Data mismatch found!")
+            print(f"Primary key: {primary_key_value1}")
+            print(f"Modified column in {table1_name}:", header1, col1)
+            print(f"Modified column in {table2_name}:", header2, col2)
+
+            # Insert results into the MismatchResults table
+            cursor.execute('''
+                INSERT INTO Developer.MismatchResults (Table1Name, Table2Name, PrimaryKey, ColumnName, Value1, Value2)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', table1_name, table2_name, primary_key_value1, header1, str(col1), str(col2))
+else :
+    print("No Missmatch Value")
+
+# Commit the transaction
+conn.commit()
+
+# Close the connection
+conn.close()
