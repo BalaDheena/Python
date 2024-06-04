@@ -1,0 +1,223 @@
+import pandas as pd
+import glob
+import os
+import re
+import math
+import pyodbc
+
+def find_max_float_length(float_values):
+    max_length_before_point = 0
+    max_length_after_point = 0
+    for value in float_values:
+        if value is not None and not math.isnan(value):
+            str_value = str(value)
+            if '.' in str_value:
+                before_point, after_point = str_value.split('.')
+                max_length_before_point = max(max_length_before_point, int(len(before_point)))
+                max_length_after_point = max(max_length_after_point, int(len(after_point)))
+            else:
+                max_length_before_point = max(max_length_before_point, len(str_value))
+    return max_length_before_point, max_length_after_point
+
+folder_path = input("Please enter the folder path: ")
+SchemaName = input("Please enter the SchemaName: ")
+TableName = input("Please enter the TableName: ")
+output_folder = r'C:\Users\balamurugan.d\Downloads\New folder (6)'  # Output folder path
+files = glob.glob(folder_path + '/*.csv') + glob.glob(folder_path + '/*.xlsx') + glob.glob(folder_path + '/*.xls') + glob.glob(folder_path + '/*.xlsm') + glob.glob(folder_path + '/*.parquet') + glob.glob(folder_path + '/*.txt')
+file_info = {}  # Dictionary to store file information
+print("Profiling Started")
+
+for file in files:
+    if file.endswith('.csv'):
+        df = pd.read_csv(file, header=0, low_memory=False, on_bad_lines='skip')
+    elif file.endswith('.xlsx') or file.endswith('.xls') or file.endswith('.xlsm'):
+        df = pd.read_excel(file, header=0)
+    elif file.endswith('.parquet'):
+        df = pd.read_parquet(file)
+    elif file.endswith('.txt'):
+        with open(file, 'r') as txt_file:
+            lines = txt_file.readlines()
+        df = pd.DataFrame(lines)
+    else:
+        continue
+
+    count_rows = len(df)
+    columns = df.columns
+    column_data_types = df.dtypes.to_dict()  # Get data types as a dictionary
+    max_length_columns = {}
+    precision_columns = {}
+    integer_columns = {}  # New dictionary to store integer part length for float64 columns
+    max_values = {}  # Dictionary to store maximum values
+    min_values = {}  # Dictionary to store minimum values
+    Datetype1 = {}  # Dictionary to store maximum values as formatted dates
+    Datetype2 = {}  # Dictionary to store minimum values as formatted dates
+
+    for column in columns:
+        ColumnHeader = df.columns.tolist()
+        data_type = column_data_types[column]
+        if df[column].isnull().all():
+            data_type = 'VARCHAR(30)'
+            max_length_columns[column] = data_type
+        if data_type == 'object':
+            if df[column].str.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z').any():
+                data_type = 'DATETIME(WITH Alphabets with start year)'
+            elif df[column].str.match(r'\d{2}-\d{2}-\d{4}T\d{2}:\d{2}:\d{2}\.\d{7}Z').any():
+                data_type = 'DATETIME(WITH Alphabets with start Day)'
+            elif df[column].str.match(r'\d{4}-\d{2}-\d{2}\d{2}:\d{2}:\d{2}\.\d{7}Z').all():
+                data_type = 'DATETIME(WITH End alphabet start year)'
+            elif df[column].str.match(r'\d{2}-\d{2}-\d{4}\d{2}:\d{2}:\d{2}\.\d{7}Z').all():
+                data_type = 'DATETIME(WITH End alphabet start Day)'
+            elif df[column].str.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}').all():
+                data_type = 'DATETIME(WITH  Start alphabet start year)'
+            elif df[column].str.match(r'\d{2}-\d{2}-\d{4}T\d{2}:\d{2}:\d{2}\.\d{7}').all():
+                data_type = 'DATETIME(WITH  Start alphabet start Day )'
+            elif df[column].str.match(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}').any():
+                data_type = 'DATETIME(WITH YEAR START)'
+            elif df[column].str.match(r'\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2}').any():
+                data_type = 'DATETIME(WITH DAY START)'
+            elif df[column].str.match(r'\d{2}-\d{2}-\d{4}').all():
+                data_type = 'DATE'
+            elif df[column].str.match(r'\d{4}-\d{2}-\d{2}').all():
+                data_type = 'DATE'
+            else:
+                max_length = df[column].astype(str).str.len().max()
+                data_type = f"VARCHAR({max_length})"
+            max_length_columns[column] = data_type
+        elif data_type == 'None':
+            max_length = df[column].isnull().all()
+            data_type = 'unknown'
+        elif data_type=='int32':
+                data_type = 'INT'
+                max_length_columns[column] = data_type
+                max_values[column] = df[column].max()
+                min_values[column] = df[column].min()
+        elif data_type == 'int64':
+            df[column].fillna(value=1, inplace=True)
+            integer_length = df[column].apply(lambda x: len(str(x))).max()
+            if integer_length < 10:
+                data_type = 'INT'
+            else:
+                data_type = 'BIGINT'
+            max_length_columns[column] = data_type
+            max_values[column] = df[column].max()  # Store maximum value
+            min_values[column] = df[column].min()
+        elif data_type == 'float64':
+            float_values = df[column].dropna().values
+            float_values = df[column].values  # Get non-null float values
+            max_len_before, max_len_after = find_max_float_length(float_values)
+            integer_length = max_len_before
+            precision_length = max_len_after
+            precision_columns[column] = precision_length
+            integer_columns[column] = integer_length
+            max_values[column] = df[column].max()  # Store maximum value
+            min_values[column] = df[column].min()  # Store minimum value
+            max_value = df[column].max()
+            if precision_length == 1 and re.match(r'^\d+\.0+$', str(max_value)) and integer_length < 10:
+                data_type = 'INT(NULL)'
+            elif precision_length == 1 and re.match(r'^\d+\.0+$', str(max_value)) and integer_length > 10:
+                data_type = 'BIGINT(NULL)'
+            else:
+                data_type = f'NUMERIC({integer_length}, {precision_length})'
+            max_length_columns[column] = data_type
+        elif data_type == 'datetime64[ns]':
+            date_formats = ['%Y-%m-%d', '%d-%m-%Y']
+            regex_pattern = r'^tod{2}-\d{2}-\d{4}$'
+            column_values = df[column].dropna().astype(str)
+            matching_formats = [format for format in date_formats if all(value.startswith(format) for value in column_values)]
+            matching_regex = [value for value in column_values if re.match(regex_pattern, value)]
+            if matching_formats or matching_regex:
+                data_type = 'DATE'
+            else:
+                data_type = 'DATETIME'
+            max_length_columns[column] = data_type
+            max_values[column] = df[column].max()
+            min_values[column] = df[column].min()
+
+    file_name = os.path.basename(file)  # Extracting file name from the path
+    file_info[file_name] = {'rows': count_rows, 'columns': columns, 'data_types': column_data_types,
+                            'max_length_columns': max_length_columns, 'precision_columns': precision_columns,
+                            'integer_columns': integer_columns, 'max_values': max_values, 'min_values': min_values, 'ColumnHeader': ColumnHeader}
+
+os.makedirs(output_folder, exist_ok=True)
+
+for file, info in file_info.items():
+    output_file_path = os.path.join(output_folder, file.split('.')[0] + '_output.csv')
+    with open(output_file_path, 'w') as output_file:
+        output_file.write(f"File: {file}\n")
+        output_file.write(f"Total Rows: {info['rows']}\n")
+        output_file.write(f"Total Columns: {len(info['columns'])}\n")  # Counting the number of columns
+        output_file.write(f"The ColumnHeaders are: {', '.join(info['ColumnHeader'])}\n")
+        output_file.write("Columns:\n")
+        for column in info['columns']:
+            data_type = info['data_types'][column]
+            if column in info['max_length_columns']:
+                data_type = info['max_length_columns'][column]
+            output_file.write(f"- {column} {data_type}  MaxLength: {df[column].astype(str).str.len().max()} MinLength: {df[column].astype(str).str.len().min()}\n")
+            if data_type in ['NUMERIC', 'INT', 'DATE', 'DateTime']:
+                output_file.write(f"  Max Value: {info['max_values'][column]}, Min Value: {info['min_values'][column]}\n")
+        output_file.write("\n")
+        output_file.write(f"Create Table {SchemaName}.{TableName} (\n")
+        for column in info['columns']:
+            data_type = info['data_types'][column]
+            if column in info['max_length_columns']:
+                data_type = info['max_length_columns'][column]
+            output_file.write(f"    [{column}] {data_type} NULL,\n")
+        output_file.write(");")
+print("completed")
+print("The files are saved in the folder:", output_folder)
+
+TableCreation = input("Do you want to create the table in the database (yes/no): ")
+if TableCreation.lower() == 'yes':
+    ServerName = input("Please Enter ServerName: ")
+    DataBaseName = input("Please Enter DataBaseName: ")
+    UserName = input("Please Enter UserName: ")
+    Password = input("Please Enter Password: ")
+    conn = pyodbc.connect(f"DRIVER={{SQL Server}};SERVER={ServerName};DATABASE={DataBaseName};UID={UserName};PWD={Password}")
+    cursor = conn.cursor()
+
+    # Check if the table already exists in the database
+    cursor.execute(f"SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{SchemaName}' AND TABLE_NAME = '{TableName}'")
+    result = cursor.fetchone()
+    if result:
+        print(f"The table {SchemaName}.{TableName} already exists. Do you want to alter it? (yes/no)")
+        alter_table = input()
+        if alter_table.lower() == 'yes':
+            # Fetch existing columns and their data types from the database table
+            cursor.execute(f"SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{SchemaName}' AND TABLE_NAME = '{TableName}'")
+            existing_columns_info = {row.COLUMN_NAME: row.DATA_TYPE for row in cursor.fetchall()}
+            # Compare and add missing columns or alter data types
+            for column in info['columns']:
+                data_type = info['data_types'][column]
+                if column in info['max_length_columns']:
+                    data_type = info['max_length_columns'][column]
+                if column not in existing_columns_info:
+                    # If the column is missing, add it to the database
+                    alter_query = f"ALTER TABLE {SchemaName}.{TableName} ADD [{column}] {data_type} NULL;"
+                    cursor.execute(alter_query)
+                elif existing_columns_info[column].upper() != data_type.upper():
+                    # If the column exists but the data type is different, alter the data type
+                    alter_query = f"ALTER TABLE {SchemaName}.{TableName} ALTER COLUMN [{column}] {data_type};"
+                    cursor.execute(alter_query)
+            for existing_column in existing_columns_info.keys():
+                if existing_column not in info['columns']:
+                    alter_query = f"ALTER TABLE {SchemaName}.{TableName} DROP COLUMN [{existing_column}];"
+                    cursor.execute(alter_query)
+            conn.commit()
+            print("Table has been altered to include missing columns and updated data types.")
+        else:
+            print("No changes will be made to the existing table.")
+    else:
+        # If the table does not exist, create it
+        query = f"CREATE TABLE {SchemaName}.{TableName} ("
+        for column in info['columns']:
+            data_type = info['data_types'][column]
+            if column in info['max_length_columns']:
+                data_type = info['max_length_columns'][column]
+            query += f"    [{column}] {data_type} NULL,"
+        query = query.rstrip(',') + ");"  # Remove the trailing comma and close the parenthesis
+        cursor.execute(query)
+        conn.commit()
+        print("Table creation is completed.")
+    conn.close()
+else:
+    print("The process is completed and table structure is available in the output file.")
