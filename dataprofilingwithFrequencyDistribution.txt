@@ -1,0 +1,400 @@
+import pandas as pd
+import glob
+import os
+import re
+import math
+import pyodbc
+import numpy as np
+from tabulate import tabulate
+
+def Categorize_Numeric_Value(values):
+    categorized_values = {
+        '-∞ To -1000': [],
+        '-1000 To -100': [],
+        '-100 To -1': [],
+        '0': [],
+        '1 To 100': [],
+        '100 To 1000': [],
+        '1000 To ∞': []
+    }
+
+    for value in values:
+        if value is not None:  # Check if value is not None
+            if value < -1000:
+                categorized_values['-∞ To -1000'].append(round(value))
+            elif -1000 <= value < -100:
+                categorized_values['-1000 To -100'].append(round(value))
+            elif -100 <= value < -1:
+                categorized_values['-100 To -1'].append(round(value))
+            elif value == 0:
+                categorized_values['0'].append(round(value))
+            elif 1 <= value < 100:
+                categorized_values['1 To 100'].append(round(value))
+            elif 100 <= value < 1000:
+                categorized_values['100 To 1000'].append(round(value))
+            else:
+                categorized_values['1000 To ∞'].append(round(value))
+
+    return categorized_values
+#def split_date_and_count(df, column):
+    #if column not in df.columns:
+        #raise ValueError(f"Column '{column}' not found in DataFrame.")
+    #if df[column].dtype != 'datetime64[ns]':
+        #df[column] = pd.to_datetime(df[column])
+    #year_counts = df[column].dt.year.value_counts().reset_index()
+    #year_counts.columns = ['Year', 'Count']
+    #return year_counts
+#def split_date_and_count(df, column):
+    # Assuming this function splits the date and returns a DataFrame with counts
+    #df['Year'] = df[column].dt.year
+    #df['Month'] = df[column].dt.month
+    #df['Day'] = df[column].dt.day
+    #year_counts = df['Year'].value_counts().reset_index().rename(columns={'index': 'Year', 'Year': 'Count'})
+    #month_counts = df['Month'].value_counts().reset_index().rename(columns={'index': 'Month', 'Month': 'Count'})
+    #day_counts = df['Day'].value_counts().reset_index().rename(columns={'index': 'Day', 'Day': 'Count'})
+    #return pd.concat([year_counts, month_counts, day_counts], keys=['Year', 'Month', 'Day'])
+    #return pd.concat([year_counts], keys=['Year']) and  pd.concat([month_counts],keys=['Month'])
+def split_date_and_count(df, column):
+    # Extract year and month from the date column
+    df['Year'] = df[column].dt.year
+    df['Month'] = df[column].dt.month
+    # Group by year and month and count occurrences
+    year_month_counts = df.groupby(['Year', 'Month']).size().reset_index(name='Count')
+    return year_month_counts
+# Example usage
+#numeric_values = df['column_name'].tolist()
+#result = Categorize_Numeric_Value(numeric_values)
+
+# Print the categorized values
+#for category, values in result.items():
+    #count=len(values)
+    #print(f"{category}: {count}")
+def find_max_float_length(float_values):
+    max_length_before_point = 0
+    max_length_after_point = 0
+    for value in float_values:
+        if value is not None and not math.isnan(value):
+            str_value = str(value)
+            if '.' in str_value:
+                before_point, after_point = str_value.split('.')
+                max_length_before_point = max(max_length_before_point, int(len(before_point)))
+                max_length_after_point = max(max_length_after_point, int(len(after_point)))
+            else:
+                max_length_before_point = max(max_length_before_point, len(str_value))
+    return max_length_before_point, max_length_after_point
+
+def extract_names(file_name):
+    parts = file_name.split('_')
+    if len(parts) > 1 and '.' in parts[1]:
+        schema_name = parts[0]
+        table_name = parts[1].split('.')[0]
+    else:
+        raise ValueError("File name does not match the expected format 'Schemaname_Tablename.fileformat'")
+    return schema_name, table_name
+
+folder_path = input("Please enter the folder path: ")
+output_folder = input("Please enter the output folder path: ")#r'C:\Users\balamurugan.d\Downloads\New folder (6)'  # Output folder path
+files = glob.glob(folder_path + '/*.csv') + glob.glob(folder_path + '/*.xlsx') + glob.glob(folder_path + '/*.xls') + glob.glob(folder_path + '/*.xlsm') + glob.glob(folder_path + '/*.parquet') + glob.glob(folder_path + '/*.txt')
+file_info = {}  # Dictionary to store file information
+print("Profiling Started")
+
+for file in files:
+    SchemaName, TableName = extract_names(os.path.basename(file))
+    if file.endswith('.csv'):
+        df = pd.read_csv(file, header=0, low_memory=False, on_bad_lines='skip')
+    elif file.endswith('.xlsx') or file.endswith('.xls') or file.endswith('.xlsm'):
+        df = pd.read_excel(file, header=0)
+    elif file.endswith('.parquet'):
+        df = pd.read_parquet(file)
+    elif file.endswith('.txt'):
+        with open(file, 'r') as txt_file:
+            lines = txt_file.readlines()
+        df = pd.DataFrame(lines)
+    else:
+        continue
+
+    count_rows = len(df)
+    columns = df.columns
+    column_data_types = df.dtypes.to_dict()  # Get data types as a dictionary
+    max_length_columns = {}
+    precision_columns = {}
+    integer_columns = {}  # New dictionary to store integer part length for float64 columns
+    max_values = {}  # Dictionary to store maximum values
+    min_values = {}  # Dictionary to store minimum values
+    distinct_values = {}  # Dictionary to store distinct values count
+    column_counts = {}  # Dictionary to store each column's count
+    Datetype1 = {}  # Dictionary to store maximum values as formatted dates
+    Datetype2 = {}  # Dictionary to store minimum values as formatted dates
+    Null_Values = {}
+
+    for column in columns:
+        ColumnHeader = df.columns.tolist()
+        data_type = column_data_types[column]
+        distinct_values[column] = df[column].nunique()
+        column_counts[column] = df[column].count()
+        Null_Values[column] = df[column].isnull().sum()
+        if df[column].isnull().all():
+            data_type = 'VARCHAR(3)'
+            max_length_columns[column] = data_type
+            max_values[column] = df[column].max()
+            min_values[column] = df[column].min()
+        elif data_type == 'object':
+            try:
+                df[column] = pd.to_numeric(df[column])
+                data_type = df[column].dtype
+            except ValueError:
+                if df[column].str.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}Z').any():
+                    data_type = 'DATETIME(WITH Alphabets with start year)'
+                elif df[column].str.match(r'\d{2}-\d{2}-\d{4}T\d{2}:\d{2}:\d{2}\.\d{7}Z').any():
+                    data_type = 'DATETIME(WITH Alphabets with start Day)'
+                elif df[column].str.match(r'\d{4}-\d{2}-\d{2}\d{2}:\d{2}:\d{2}\.\d{7}Z').all():
+                    data_type = 'DATETIME(WITH End alphabet start year)'
+                elif df[column].str.match(r'\d{2}-\d{2}-\d{4}\d{2}:\d{2}:\d{2}\.\d{7}Z').all():
+                    data_type = 'DATETIME(WITH End alphabet start Day)'
+                elif df[column].str.match(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}').all():
+                    data_type = 'DATETIME(WITH  Start alphabet start year)'
+                elif df[column].str.match(r'\d{2}-\d{2}-\d{4}T\d{2}:\d{2}:\d{2}\.\d{7}').all():
+                    data_type = 'DATETIME(WITH  Start alphabet start Day )'
+                elif df[column].str.match(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}').any():
+                    data_type = 'DATETIME(WITH YEAR START)'
+                elif df[column].str.match(r'\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2}').any():
+                    data_type = 'DATETIME(WITH DAY START)'
+                elif df[column].str.match(r'\d{2}-\d{2}-\d{4}').all():
+                    data_type = 'DATE'
+                elif df[column].str.match(r'\d{4}-\d{2}-\d{2}').all():
+                    data_type = 'DATE'
+                else:
+                    max_length = df[column].astype(str).str.len().max()
+                    data_type = f"VARCHAR({max_length})"
+                    max_length_columns[column] = data_type
+                    max_values[column] = df[column].max()
+                    min_values[column] = df[column].min()
+        #elif data_type == 'None':
+            #max_length = df[column].isnull().all()
+            #data_type = 'VARCHAR(3)'
+        elif data_type == 'int32':
+            data_type = 'INT'
+            max_length_columns[column] = data_type
+            max_values[column] = df[column].max()
+            min_values[column] = df[column].min()
+        elif data_type == 'int64':
+            df[column].fillna(value=1, inplace=True)
+            integer_length = df[column].apply(lambda x: len(str(x))).max()
+            if integer_length < 10:
+                data_type = 'INT'
+            else:
+                data_type = 'BIGINT'
+            max_length_columns[column] = data_type
+            max_values[column] = df[column].max()  # Store maximum value
+            min_values[column] = df[column].min()
+        elif data_type == 'float64':
+            float_values = df[column].dropna().values
+            float_values = df[column].values  # Get non-null float values
+            max_len_before, max_len_after = find_max_float_length(float_values)
+            integer_length = max_len_before
+            precision_length = max_len_after
+            precision_columns[column] = precision_length
+            integer_columns[column] = integer_length
+            max_values[column] = df[column].max()  # Store maximum value
+            min_values[column] = df[column].min()  # Store minimum value
+            max_value = df[column].max()
+            if precision_length == 1 and re.match(r'^\d+\.0+$', str(max_value)) and integer_length < 10:
+                data_type = 'INT(NULL)'
+            elif precision_length == 1 and re.match(r'^\d+\.0+$', str(max_value)) and integer_length > 10:
+                data_type = 'BIGINT(NULL)'
+            else:
+                data_type = f'NUMERIC({integer_length}, {precision_length})'
+            max_length_columns[column] = data_type
+        elif data_type == 'datetime64[ns]':
+            date_formats = ['%Y-%m-%d', '%d-%m-%Y']
+            regex_pattern = r'^tod{2}-\d{2}-\d{4}$'
+            column_values = df[column].dropna().astype(str)
+            matching_formats = [format for format in date_formats if all(value.startswith(format) for value in column_values)]
+            matching_regex = [value for value in column_values if re.match(regex_pattern, value)]
+            if matching_formats or matching_regex:
+                data_type = 'DATE'
+            else:
+                data_type = 'DATETIME'
+            max_length_columns[column] = data_type
+            max_values[column] = df[column].max()
+            min_values[column] = df[column].min()
+
+    file_name = os.path.basename(file)  # Extracting file name from the path
+    file_info[file_name] = {'rows': count_rows, 'columns': columns, 'data_types': column_data_types,
+                            'max_length_columns': max_length_columns, 'precision_columns': precision_columns,
+                            'integer_columns': integer_columns, 'max_values': max_values, 'min_values': min_values,
+                            'distinct_values': distinct_values, 'column_counts': column_counts, 'ColumnHeader': ColumnHeader,
+                            'Null_Values': Null_Values,'SchemaName':SchemaName,'TableName':TableName}
+
+if not os.path.exists(output_folder):
+    os.makedirs(output_folder)
+output_file_path = os.path.join(output_folder, f"{SchemaName}_{TableName}.txt")
+#output_csv_path = os.path.join(output_folder, 'File_Information.csv')
+
+with open(output_file_path, 'w', encoding='utf-8') as output_file:
+    for file, info in file_info.items():
+        SchemaName, TableName = extract_names(file)
+        output_file.write(f"Schema: {SchemaName}\n")
+        output_file.write("\n")
+        output_file.write(f"Table: {TableName}\n")
+        output_file.write("\n")
+        output_file.write(f"Total Rows: {info['rows']}\n")
+        output_file.write("\n")
+        output_file.write(f"Total Columns: {len(info['columns'])}\n")
+        output_file.write("\n")
+        output_file.write(f"The Column Headers are: {', '.join(info['ColumnHeader'])}\n")
+        output_file.write("\n")
+        output_file.write("Columns:")
+        output_file.write("\n")
+        for column in info['columns']:
+            data_type = info['data_types'][column]
+            if column in info['max_length_columns']:
+                data_type = info['max_length_columns'][column]
+                max_len = max(df[column].astype(str).apply(lambda x: len(str(x))) if column in df.columns else ['N/A'])
+                min_len = min(df[column].astype(str).apply(lambda x: len(str(x))) if column in df.columns else ['N/A'])
+                output_file.write(f"- [{column}]  : {data_type}  MaxLength: {max_len} MinLength: {min_len}\n")
+            if data_type in ['VARCHAR']:
+                max_val =  info['max_values'][column] #if column in info['max_values'] else 'N/A' # max(df[column])
+                min_val = info['min_values'][column] #if column in info['min_values'] else 'N/A'
+                output_file.write(f"  Max string Value: {max_val}, Min Value: {min_val}\n")
+            elif data_type in [ 'INT', 'BIGINT','NUMERIC']:
+                max_val = info['max_values'][column] #if column in info['max_values'] else 'N/A'
+                min_val = info['min_values'][column] #if column in info['min_values'] else 'N/A'
+                output_file.write(f"  Max Value: {max_val}, Min Value: {min_val}\n")
+            elif data_type in ['DATE', 'DATETIME']:
+                max_val = info['max_values'][column] #if column in info['max_values'] else 'N/A'
+                min_val = info['min_values'][column] #if column in info['min_values'] else 'N/A'
+                output_file.write(f"  Max Date: {max_val}, Min Date: {min_val}\n")
+        output_file.write("\n\n")
+        output_file.write(f"---------------------------------------{SchemaName}.{TableName}---------------------------------------------------")
+        output_file.write("\n\n")
+        table_data = []
+        for column in info['columns']:
+            data_type = info['data_types'][column]
+            if column in info['max_length_columns']:
+                data_type = info['max_length_columns'][column]
+            row = [
+                #info['SchemaName'],
+                #info['TableName'],
+                #df.groupby[column].apply(count_rows),
+                column,
+                info['distinct_values'][column],
+                info['column_counts'][column],
+                data_type,
+                info['Null_Values'][column]
+            ]
+            table_data.append(row)
+        #'SchemaName','TableName',
+        output_file.write(tabulate(table_data, headers=['Column Header', 'Column Distinct Values', 'Each Row Count', 'Datatype','Null Values Count'], tablefmt="grid"))
+        output_file.write("\n\n")
+        output_file.write("\n\n")
+        #for numeric values
+        output_file.write(f"---------------------------------------NumericField Details---------------------------------------------------")
+        output_file.write("\n\n")
+        table_data1=[]
+        for column in info['columns']:
+            if info['data_types'][column] in ['int32', 'int64', 'float64']:
+                rounded_values = [round(value) if not math.isnan(value) else None for value in df[column].tolist()]
+                categorized_values = Categorize_Numeric_Value(rounded_values)
+                row1 = [column] + [len(values) for values in categorized_values.values()]
+                table_data1.append(row1)
+        output_file.write(tabulate(table_data1, headers=['Header', '-∞ To -1000', '-1000 To -100', '-100 To -1', '0', '1 To 100', '100 To 1000', '1000 To ∞'], tablefmt="grid"))
+        output_file.write("\n\n")
+        output_file.write("\n\n")
+        #For Datevalues
+        output_file.write(f"---------------------------------------DateField Details---------------------------------------------------")
+        output_file.write("\n\n")
+        output_file.write("\n\n")
+        table_data2 = []
+        for column in info['columns']:
+            if info['data_types'][column] in ['DATE', 'DATETIME','datetime64[ns]']:
+                df[column] = pd.to_datetime(df[column])
+                year_month_day_counts = split_date_and_count(df, column)
+                #table_data2.extend(year_month_day_counts.values.tolist())
+                #row2= [column] +table_data2.extend(year_month_day_counts.values.tolist())
+                #table_data2.append(row2)
+                for index, row in year_month_day_counts.iterrows():
+                    table_data2.append([column] + row.tolist())
+        #output_file.write(tabulate(table_data2, headers=['Header', 'Year', 'Count'], tablefmt="grid"))
+        output_file.write(tabulate(table_data2, headers=['Header', 'Year','Month', 'Count'], tablefmt="grid"))
+        output_file.write("\n\n")
+        output_file.write("\n\n")
+        output_file.write(f"---------------------------------------CharacterField Details---------------------------------------------------")
+        output_file.write("\n\n")
+        table_data3 = []
+        for column in info['columns']:
+            if info['data_types'][column] == 'object':
+                unique_values = df[column].value_counts().reset_index()
+                unique_values.columns = ['Value','count']
+                #table_data3.append([column, unique_values.to_string(index=False)])
+                for _, row in unique_values.iterrows():
+                    table_data3.append([column, row['Value'], row['count']])
+        output_file.write(tabulate(table_data3, headers=['Header', 'Values' , 'Count'], tablefmt="grid"))
+        output_file.write(f"---------------------------------------Table Structure---------------------------------------------------")
+        output_file.write("\n\n")
+        output_file.write("The Table Structure is:\n")
+        output_file.write("\n")
+        output_file.write(f"Create Table {SchemaName}.{TableName} (\n")
+        for column in info['columns']:
+            data_type = info['data_types'][column]
+            if column in info['max_length_columns']:
+                data_type = info['max_length_columns'][column]
+            output_file.write(f"    [{column}] {data_type} NULL,\n")
+        output_file.write(");\n")
+        output_file.write("\n\n")
+print("completed")
+print("The files are saved in the folder:", output_folder)
+
+TableCreation = input("Do you want to create the table in the database (yes/no): ")
+if TableCreation.lower() == 'yes':
+    ServerName = input("Please Enter ServerName: ")
+    DataBaseName = input("Please Enter DataBaseName: ")
+    UserName = input("Please Enter UserName: ")
+    Password = input("Please Enter Password: ")
+    conn = pyodbc.connect(f"DRIVER={{SQL Server}};SERVER={ServerName};DATABASE={DataBaseName};UID={UserName};PWD={Password}")
+    cursor = conn.cursor()
+
+    for file, info in file_info.items():
+        SchemaName, TableName = extract_names(file)
+        cursor.execute(f"SELECT * FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = '{SchemaName}' AND TABLE_NAME = '{TableName}'")
+        result = cursor.fetchone()
+        if result:
+            print(f"The table {SchemaName}.{TableName} already exists. Do you want to alter it? (yes/no)")
+            alter_table = input()
+            if alter_table.lower() == 'yes':
+                cursor.execute(f"SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = '{SchemaName}' AND TABLE_NAME = '{TableName}'")
+                existing_columns_info = {row.COLUMN_NAME: row.DATA_TYPE for row in cursor.fetchall()}
+                for column in info['columns']:
+                    data_type = info['data_types'][column]
+                    if column in info['max_length_columns']:
+                        data_type = info['max_length_columns'][column]
+                    if column not in existing_columns_info:
+                        alter_query = f"ALTER TABLE {SchemaName}.{TableName} ADD [{column}] {data_type} NULL;"
+                        cursor.execute(alter_query)
+                    elif existing_columns_info[column].upper() != data_type.upper():
+                        alter_query = f"ALTER TABLE {SchemaName}.{TableName} ALTER COLUMN [{column}] {data_type};"
+                        cursor.execute(alter_query)
+                for existing_column in existing_columns_info.keys():
+                    if existing_column not in info['columns']:
+                        alter_query = f"ALTER TABLE {SchemaName}.{TableName} DROP COLUMN [{existing_column}];"
+                        cursor.execute(alter_query)
+                conn.commit()
+                print("Table has been altered to include missing columns and updated data types.")
+            else:
+                print("No changes will be made to the existing table.")
+        else:
+            query = f"CREATE TABLE {SchemaName}.{TableName} ("
+            for column in info['columns']:
+                data_type = info['data_types'][column]
+                if column in info['max_length_columns']:
+                    data_type = info['max_length_columns'][column]
+                query += f"    [{column}] {data_type} NULL,"
+            query = query.rstrip(',') + ");"
+            cursor.execute(query)
+            conn.commit()
+            print(f"Table {SchemaName}.{TableName} creation is completed.")
+
+
+    conn.close()
+else:
+    print("The process is completed and table structure is available in the output file.")
